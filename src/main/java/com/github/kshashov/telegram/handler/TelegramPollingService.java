@@ -4,8 +4,10 @@ package com.github.kshashov.telegram.handler;
 import com.github.kshashov.telegram.config.TelegramBotProperties;
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.UpdatesListener;
+import com.pengrad.telegrambot.request.BaseRequest;
 import com.pengrad.telegrambot.request.DeleteWebhook;
 import com.pengrad.telegrambot.request.GetUpdates;
+import com.pengrad.telegrambot.response.BaseResponse;
 import lombok.extern.slf4j.Slf4j;
 
 import javax.validation.constraints.NotNull;
@@ -45,5 +47,10 @@ public class TelegramPollingService implements TelegramService {
     @Override
     public void stop() {
         telegramBot.removeGetUpdatesListener();
+    }
+
+    @Override
+    public <T extends BaseRequest<T, R>, R extends BaseResponse> R execute(BaseRequest<T, R> request) {
+        return telegramBot.execute(request);
     }
 }

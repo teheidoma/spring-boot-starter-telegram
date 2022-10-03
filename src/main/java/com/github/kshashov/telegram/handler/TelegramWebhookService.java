@@ -5,6 +5,7 @@ import com.github.kshashov.telegram.config.TelegramBotProperties;
 import com.pengrad.telegrambot.BotUtils;
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.model.Update;
+import com.pengrad.telegrambot.request.BaseRequest;
 import com.pengrad.telegrambot.request.DeleteWebhook;
 import com.pengrad.telegrambot.request.SetWebhook;
 import com.pengrad.telegrambot.response.BaseResponse;
@@ -101,5 +102,10 @@ public class TelegramWebhookService implements TelegramService {
     public void stop() {
         log.info("Webhook has been deleted");
         telegramBot.execute(new DeleteWebhook());
+    }
+
+    @Override
+    public <T extends BaseRequest<T, R>, R extends BaseResponse> R execute(BaseRequest<T, R> request) {
+        return telegramBot.execute(request);
     }
 }

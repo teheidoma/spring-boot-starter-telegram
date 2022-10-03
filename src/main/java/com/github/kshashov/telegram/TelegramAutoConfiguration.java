@@ -1,6 +1,5 @@
 package com.github.kshashov.telegram;
 
-import com.github.kshashov.telegram.api.TelegramMvcController;
 import com.github.kshashov.telegram.api.TelegramSession;
 import com.github.kshashov.telegram.config.TelegramBotGlobalProperties;
 import com.github.kshashov.telegram.config.TelegramBotGlobalPropertiesConfiguration;
@@ -14,16 +13,14 @@ import com.github.kshashov.telegram.handler.processor.response.BotHandlerMethodR
 import com.github.kshashov.telegram.metrics.MetricsConfiguration;
 import com.github.kshashov.telegram.metrics.MetricsService;
 import com.pengrad.telegrambot.Callback;
-import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.request.BaseRequest;
 import com.pengrad.telegrambot.response.BaseResponse;
-import io.javalin.Javalin;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.Dispatcher;
 import okhttp3.OkHttpClient;
 import org.springframework.beans.BeansException;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -38,11 +35,9 @@ import org.springframework.core.env.Environment;
 import javax.validation.constraints.NotNull;
 import java.io.IOException;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 /**
  * Main configuration for telegram mvc.
@@ -55,69 +50,8 @@ public class TelegramAutoConfiguration implements BeanFactoryPostProcessor, Envi
     private Environment environment;
 
     @Bean
-    Javalin javalinServer(@Qualifier("telegramBotPropertiesList") List<TelegramBotProperties> botProperties, TelegramBotGlobalProperties globalProperties) {
-        boolean hasWebhook = botProperties.stream().anyMatch(p -> p.getWebhook() != null);
-        if (!hasWebhook) return null;
-
-        try {
-            Javalin server = Javalin.create().start(globalProperties.getWebserverPort());
-            log.info("Javalin server has been started on {} port", globalProperties.getWebserverPort());
-            return server;
-        } catch (Exception ex) {
-            log.error("An unexpected error occured while starting Javalin server", ex);
-            return null;
-        }
-    }
-
-    @Bean
     TelegramUpdatesHandler telegramUpdatesHandler(TelegramBotGlobalProperties globalProperties, RequestDispatcher requestDispatcher, MetricsService metricsService) {
         return new DefaultTelegramUpdatesHandler(requestDispatcher, globalProperties, metricsService);
-    }
-
-    @Bean
-    @Qualifier("telegramServicesList")
-    List<TelegramService> telegramServices(@Qualifier("telegramBotPropertiesList") List<TelegramBotProperties> botProperties, TelegramUpdatesHandler updatesHandler, TelegramBotGlobalProperties globalProperties, Optional<Javalin> server) {
-        List<TelegramService> services = botProperties.stream()
-                .map(p -> {
-                    // Register TelegramBot bean
-                    TelegramBot bot = p.getBotBuilder().build();
-
-                    // Let user process bot instance
-                    if (globalProperties.getBotProcessors().containsKey(p.getToken())) {
-                        globalProperties.getBotProcessors().get(p.getToken()).accept(bot);
-                    }
-
-                    // Create bot service
-                    if (p.getWebhook() != null) {
-                        return new TelegramWebhookService(p, bot, updatesHandler, server.get());
-                    } else {
-                        return new TelegramPollingService(p, bot, updatesHandler);
-                    }
-                }).collect(Collectors.toList());
-
-        if (services.isEmpty()) {
-            log.error("No bot configurations found");
-        } else {
-            log.info("Finished Telegram controllers scanning. Found {} bots", services.size());
-        }
-
-        return services;
-    }
-
-    @Bean
-    @Qualifier("telegramBotPropertiesList")
-    List<TelegramBotProperties> telegramBotPropertiesList(List<TelegramMvcController> controllers, TelegramBotGlobalProperties globalProperties) {
-        return controllers.stream()
-                .map(TelegramMvcController::getToken)
-                .distinct()
-                .map(token -> {
-                    TelegramBotProperties.Builder defaultBuilder = createDefaultBotPropertiesBuilder(token, globalProperties);
-
-                    if (globalProperties.getBotProperties().containsKey(token)) {
-                        globalProperties.getBotProperties().get(token).accept(defaultBuilder);
-                    }
-                    return defaultBuilder.build();
-                }).collect(Collectors.toList());
     }
 
     @Bean
@@ -174,18 +108,28 @@ public class TelegramAutoConfiguration implements BeanFactoryPostProcessor, Envi
     }
 
     @Bean
-    TelegramControllerBeanPostProcessor telegramControllerBeanPostProcessor(HandlerMethodContainer handlerMethodContainer, MetricsService metricsService) {
-        return new TelegramControllerBeanPostProcessor(handlerMethodContainer, metricsService);
+    TelegramControllerBeanPostProcessor telegramControllerBeanPostProcessor(HandlerMethodContainer handlerMethodContainer,
+                                                                            MetricsService metricsService,
+                                                                            TelegramServiceRegister telegramServiceRegister) {
+        return new TelegramControllerBeanPostProcessor(handlerMethodContainer, metricsService, telegramServiceRegister);
     }
 
     @Bean
-    ApplicationListener<ContextRefreshedEvent> onContextRefreshed(@Qualifier("telegramServicesList") List<TelegramService> telegramServices, TelegramBotGlobalProperties globalProperties, HandlerMethodContainer handlerMethodContainer) {
+    public TelegramServiceRegister telegramServiceRegister(ConfigurableBeanFactory configurableBeanFactory,
+                                                           TelegramBotGlobalProperties telegramBotGlobalProperties,
+                                                           Environment environment,
+                                                           TelegramUpdatesHandler telegramUpdatesHandler) {
+        return new TelegramServiceRegister(configurableBeanFactory, telegramBotGlobalProperties, environment, telegramUpdatesHandler);
+    }
+
+    @Bean
+    ApplicationListener<ContextRefreshedEvent> onContextRefreshed(List<TelegramService> telegramServices, TelegramBotGlobalProperties globalProperties, HandlerMethodContainer handlerMethodContainer) {
         handlerMethodContainer.setMatcherStrategy(globalProperties.getMatcherStrategy());
         return event -> telegramServices.forEach((s) -> globalProperties.getTaskExecutor().execute(s::start));
     }
 
     @Bean
-    ApplicationListener<ContextClosedEvent> onContextClosed(TelegramBotGlobalProperties globalProperties, @Qualifier("telegramServicesList") List<TelegramService> telegramServices) {
+    ApplicationListener<ContextClosedEvent> onContextClosed(TelegramBotGlobalProperties globalProperties, List<TelegramService> telegramServices) {
         return event -> {
             telegramServices.forEach(TelegramService::stop);
 

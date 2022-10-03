@@ -10,6 +10,7 @@ import com.github.kshashov.telegram.handler.processor.HandlerMethod;
 import com.github.kshashov.telegram.metrics.MetricsService;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.BeansException;
@@ -21,7 +22,6 @@ import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.lang.NonNull;
 import org.springframework.lang.Nullable;
 
-import javax.validation.constraints.NotNull;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,15 +33,13 @@ import java.util.stream.Collectors;
  * information into {@link HandlerMethodContainer}.
  */
 @Slf4j
+@RequiredArgsConstructor
 public class TelegramControllerBeanPostProcessor implements BeanPostProcessor, SmartInitializingSingleton {
     private final Set<Class<?>> nonAnnotatedClasses = Collections.newSetFromMap(new ConcurrentHashMap<>(64));
     private final HandlerMethodContainer botHandlerMethodContainer;
     private final MetricsService metricsService;
+    private final TelegramServiceRegister telegramServiceRegister;
 
-    public TelegramControllerBeanPostProcessor(@NotNull HandlerMethodContainer botHandlerMethodContainer, @NotNull MetricsService metricsService) {
-        this.botHandlerMethodContainer = botHandlerMethodContainer;
-        this.metricsService = metricsService;
-    }
 
     @Override
     public Object postProcessBeforeInitialization(@NonNull Object bean, @NonNull String beanName) throws BeansException {
@@ -70,6 +68,7 @@ public class TelegramControllerBeanPostProcessor implements BeanPostProcessor, S
                         metricsService.registerHandlerMethod(handlerMethod);
                     });
                 }
+                telegramServiceRegister.register(controller);
             } else {
                 nonAnnotatedClasses.add(targetClass);
             }
